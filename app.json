@@ -10,6 +10,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.superhale.oralpractice"
     },
+    "updates": {
+      "enabled": false
+    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
