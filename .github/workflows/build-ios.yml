@@ -1,0 +1,57 @@
+name: Build iOS ipa (unsigned)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Expo prebuild (generate ios/)
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Pod install
+        working-directory: ios
+        run: pod install
+
+      - name: Build unsigned .app (Release)
+        working-directory: ios
+        run: |
+          WORKSPACE=$(ls *.xcworkspace | head -1)
+          echo "Workspace: $WORKSPACE"
+          xcodebuild -workspace "$WORKSPACE" \
+            -scheme "$(basename "$WORKSPACE" .xcworkspace)" \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package .ipa
+        run: |
+          APP_PATH=$(find ios/build/Build/Products -name "*.app" -maxdepth 2 | head -1)
+          echo "App: $APP_PATH"
+          mkdir -p Payload
+          cp -r "$APP_PATH" Payload/
+          zip -r oral-practice-unsigned.ipa Payload
+          ls -lh oral-practice-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oral-practice-ios-unsigned
+          path: oral-practice-unsigned.ipa
+          retention-days: 14
