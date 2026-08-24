@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useAudioRecorder, useAudioPlayer } from 'expo-audio';
+import { useAudioRecorder, useAudioPlayer, useAudioRecorderState, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { Section } from '../data/content';
 import { colors } from '../theme';
 import { speakEnglish, stopSpeaking } from '../services/tts';
+import { log } from '../services/logger';
 import { ScoreResult } from '../services/scorer';
 import { getRecognizer, WAV_RECORDING_PRESET } from '../services/recognizer';
 
@@ -22,9 +23,11 @@ export default function PracticeScreen({ section, index, favorites, onToggleFavo
   const [recUri, setRecUri] = useState<string | null>(null);
   const [score, setScore] = useState<ScoreResult | null>(null);
   const [engineReady, setEngineReady] = useState<boolean | null>(null);
+  const [recError, setRecError] = useState<string | null>(null);
   const startTimeRef = useRef(0);
 
   const recorder = useAudioRecorder(WAV_RECORDING_PRESET as any);
+  const recorderState = useAudioRecorderState(recorder);
   const player = useAudioPlayer(recUri);
 
   const isFav = favorites.includes(s.id);
@@ -33,35 +36,78 @@ export default function PracticeScreen({ section, index, favorites, onToggleFavo
   const handleRecord = async () => {
     stopSpeaking();
     setScore(null);
+    setRecError(null);
     try {
+      const { granted } = await requestRecordingPermissionsAsync();
+      if (!granted) {
+        log.warn('麦克风权限被拒绝');
+        setRecError('需要麦克风权限才能录音，请在 设置 > 隐私 中开启');
+        return;
+      }
+      log.info('麦克风权限已授予');
+      // iOS 必须显式开启录音模式，否则抛 RecordingDisabledException
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       startTimeRef.current = Date.now();
       recorder.record();
+      log.info('开始录音: 已调用 record()');
+      // 延迟检查录音是否真正启动（异步失败时提前暴露）
+      setTimeout(() => {
+        try {
+          const st = recorder.getStatus();
+          log.info(
+            `录音状态检查: isRecording=${st.isRecording} canRecord=${st.canRecord} durationMillis=${st.durationMillis} url=${st.url ?? 'null'}`
+          );
+        } catch (e) {
+          log.error('录音状态检查失败: ' + String(e));
+        }
+      }, 800);
     } catch (e) {
-      console.warn('录音失败', e);
+      log.error('开始录音失败: ' + (e instanceof Error ? e.message : String(e)));
+      setRecError('无法开始录音：' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   const handleStop = async () => {
     try {
+      log.info(`停止前状态: isRecording=${recorderState.isRecording} durationMillis=${recorderState.durationMillis}`);
       await recorder.stop();
       const durSec = (Date.now() - startTimeRef.current) / 1000;
       const uri = recorder.uri;
+      const st = recorder.getStatus();
+      log.info(
+        `停止录音: 时长=${durSec.toFixed(1)}s uri=${uri ?? 'null'} statusUrl=${st.url ?? 'null'} canRecord=${st.canRecord} isRecording=${st.isRecording}`
+      );
       if (uri) {
         setRecUri(uri);
         // 尝试识别评分（dev build 环境 whisper.rn 可用时生效）
         runScoring(uri, durSec);
+      } else {
+        log.warn('录音停止后无 uri（可能没录上）');
+        setRecError('没有录到音频，请重试');
       }
     } catch (e) {
-      console.warn('停止录音失败', e);
+      log.error('停止录音失败: ' + (e instanceof Error ? e.message : String(e)));
+      setRecError('无法停止录音：' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   const runScoring = async (uri: string, durSec: number) => {
-    const recognizer = getRecognizer();
-    setEngineReady(recognizer.isAvailable());
-    const result = await recognizer.recognize(uri, s.en, durSec);
-    setScore(result);
+    try {
+      const recognizer = getRecognizer();
+      const available = recognizer.isAvailable();
+      setEngineReady(available);
+      log.info('识别引擎可用: ' + available);
+      log.info('开始评分: 时长=' + durSec.toFixed(1) + 's');
+      const result = await recognizer.recognize(uri, s.en, durSec);
+      setScore(result);
+      log.info(
+        `评分完成: total=${result.total} acc=${result.accuracy} comp=${result.completeness} flu=${result.fluency} wrong=${result.wrongWords.length}`
+      );
+    } catch (e) {
+      log.error('评分失败: ' + (e instanceof Error ? e.message : String(e)));
+      setRecError('评分失败：' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const playMine = () => {
@@ -104,9 +150,9 @@ export default function PracticeScreen({ section, index, favorites, onToggleFavo
             <Text style={styles.ctlIcon}>▶</Text>
             <Text style={styles.ctlLabel}>原声</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.ctlBtn} onPress={recorder.isRecording ? handleStop : handleRecord} activeOpacity={0.7}>
-            <Text style={[styles.ctlIcon, recorder.isRecording && styles.recIcon]}>{recorder.isRecording ? '■' : '●'}</Text>
-            <Text style={styles.ctlLabel}>{recorder.isRecording ? '停止' : '录音'}</Text>
+          <TouchableOpacity style={styles.ctlBtn} onPress={recorderState.isRecording ? handleStop : handleRecord} activeOpacity={0.7}>
+            <Text style={[styles.ctlIcon, recorderState.isRecording && styles.recIcon]}>{recorderState.isRecording ? '■' : '●'}</Text>
+            <Text style={styles.ctlLabel}>{recorderState.isRecording ? '停止' : '录音'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.ctlBtn, !recUri && styles.ctlBtnDisabled]} onPress={playMine} disabled={!recUri} activeOpacity={0.7}>
             <Text style={styles.ctlIcon}>↺</Text>
@@ -114,7 +160,11 @@ export default function PracticeScreen({ section, index, favorites, onToggleFavo
           </TouchableOpacity>
         </View>
 
-        {score && (
+        {recError && (
+          <Text style={styles.recError}>{recError}</Text>
+        )}
+
+        {score && score.total >= 0 && (
           <View style={styles.scoreCard}>
             <Text style={styles.scoreTotal}>{score.total}</Text>
             <Text style={styles.scoreTotalLabel}>总分</Text>
@@ -129,6 +179,13 @@ export default function PracticeScreen({ section, index, favorites, onToggleFavo
             {score.wrongWords.length > 0 && (
               <Text style={styles.wrongHint}>读得较弱的词：{score.wrongWords.slice(0, 5).join(' / ')}</Text>
             )}
+          </View>
+        )}
+
+        {score && score.total < 0 && (
+          <View style={styles.scoreCard}>
+            <Text style={styles.previewOk}>✓ 录音成功</Text>
+            <Text style={styles.engineHint}>预览模式：Expo Go 无法运行语音识别引擎，评分功能需安装开发版（dev build）后启用。录音流程已正常。</Text>
           </View>
         )}
 
@@ -191,6 +248,7 @@ const styles = StyleSheet.create({
   ctlIcon: { fontSize: 26, color: colors.primary },
   recIcon: { color: colors.danger },
   ctlLabel: { fontSize: 12, color: colors.textSecondary, marginTop: 4 },
+  recError: { marginTop: 14, fontSize: 12, color: colors.danger, textAlign: 'center' },
   scoreCard: {
     marginTop: 20,
     backgroundColor: colors.card,
@@ -205,6 +263,7 @@ const styles = StyleSheet.create({
   },
   scoreTotal: { fontSize: 44, fontWeight: '800', color: colors.primary },
   scoreTotalLabel: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  previewOk: { fontSize: 22, fontWeight: '700', color: '#2E7D32' },
   scoreDims: { flexDirection: 'row', marginTop: 14, alignSelf: 'stretch' },
   dim: { flex: 1, alignItems: 'center' },
   dimVal: { fontSize: 20, fontWeight: '700', color: colors.primaryLight },

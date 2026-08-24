@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SECTIONS } from './src/data/content';
+import { log } from './src/services/logger';
 import HomeScreen from './src/screens/HomeScreen';
 import SectionScreen from './src/screens/SectionScreen';
 import PracticeScreen from './src/screens/PracticeScreen';
@@ -18,15 +19,32 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    log.info('App 启动');
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(FAV_KEY);
         if (raw) setFavorites(JSON.parse(raw));
+        log.info('收藏加载完成: ' + (raw ? raw.length + ' 字符' : '空'));
       } catch (e) {
-        console.warn('加载收藏失败', e);
+        log.error('加载收藏失败: ' + String(e));
       }
       setReady(true);
     })();
+  }, []);
+
+  const openSection = useCallback((sectionId: string) => {
+    log.info(`进入列表页: ${sectionId}`);
+    setRoute({ name: 'section', sectionId });
+  }, []);
+
+  const openPractice = useCallback((sectionId: string, index: number) => {
+    log.info(`进入练习页: ${sectionId} #${index + 1}`);
+    setRoute({ name: 'practice', sectionId, index });
+  }, []);
+
+  const goHome = useCallback(() => {
+    log.info('返回首页');
+    setRoute({ name: 'home' });
   }, []);
 
   const toggleFavorite = useCallback((id: string) => {
@@ -40,7 +58,7 @@ export default function App() {
   if (!ready) return null;
 
   if (route.name === 'home') {
-    return <HomeScreen onOpenSection={(sectionId) => setRoute({ name: 'section', sectionId })} />;
+    return <HomeScreen onOpenSection={openSection} />;
   }
 
   const section = SECTIONS.find((s) => s.id === route.sectionId)!;
@@ -51,8 +69,8 @@ export default function App() {
         section={section}
         favorites={favorites}
         onToggleFavorite={toggleFavorite}
-        onPractice={(sectionId, index) => setRoute({ name: 'practice', sectionId, index })}
-        onBack={() => setRoute({ name: 'home' })}
+        onPractice={openPractice}
+        onBack={goHome}
       />
     );
   }
@@ -63,7 +81,10 @@ export default function App() {
       index={route.index}
       favorites={favorites}
       onToggleFavorite={toggleFavorite}
-      onIndexChange={(idx) => setRoute({ name: 'practice', sectionId: route.sectionId, index: idx })}
+      onIndexChange={(idx) => {
+        log.info(`切换句子: ${route.sectionId} #${idx + 1}`);
+        setRoute({ name: 'practice', sectionId: route.sectionId, index: idx });
+      }}
       onBack={() => setRoute({ name: 'section', sectionId: route.sectionId })}
     />
   );

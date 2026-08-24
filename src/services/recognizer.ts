@@ -1,4 +1,7 @@
-import { initWhisper, initWhisperVad } from 'whisper.rn';
+import { RecordingPresets } from 'expo-audio';
+import Constants from 'expo-constants';
+import { TurboModuleRegistry } from 'react-native';
+import { log } from './logger';
 import { scoreUtterance, scoreFailed, ScoreResult } from './scorer';
 
 /**
@@ -18,11 +21,19 @@ export interface Recognizer {
   recognize(uri: string, expected: string, durationSec: number): Promise<ScoreResult>;
 }
 
-/** 预览模式降级：无识别引擎，仅语速预估分（流利度维度有效） */
+/** 预览模式降级：无识别引擎，不造假分——返回哨兵结果（total=-1），UI 据此显示"录音成功、评分待开发版" */
 class PreviewRecognizer implements Recognizer {
   isAvailable() { return false; }
   async recognize(_uri: string, expected: string, durationSec: number): Promise<ScoreResult> {
-    return scoreUtterance(null, expected, durationSec);
+    log.info(`预览模式：录音 ${durationSec.toFixed(1)}s 成功，无 ASR 引擎不评分`);
+    return {
+      total: -1,
+      accuracy: -1,
+      completeness: -1,
+      fluency: -1,
+      wrongWords: [],
+      transcript: '',
+    };
   }
 }
 
@@ -31,17 +42,42 @@ class WhisperRecognizer implements Recognizer {
   private whisper: any = null;
   private vad: any = null;
 
-  isAvailable() {
+  /** 懒加载 whisper.rn：Expo Go 下 require 抛错即不可用，dev build 下正常 */
+  private loadModule(): { initWhisper: any; initWhisperVad: any } | null {
     try {
-      return !!require('whisper.rn');
+      return require('whisper.rn');
+    } catch {
+      return null;
+    }
+  }
+
+  /** whisper.rn 原生 TurboModule 是否存在（Expo Go 里为 null，dev build 里存在） */
+  private hasNativeModule(): boolean {
+    try {
+      return TurboModuleRegistry.get('RNWhisper') != null;
     } catch {
       return false;
     }
   }
 
+  isAvailable() {
+    // Expo Go（storeClient）绝无 whisper.rn 原生模块，无条件降级，不依赖 require/TurboModule 探测
+    if (Constants.executionEnvironment === 'storeClient') {
+      log.info('Expo Go 环境，whisper 不可用，降级预览模式');
+      return false;
+    }
+    if (!this.hasNativeModule()) {
+      log.info('whisper 原生模块不可用（非 dev build），降级预览模式');
+      return false;
+    }
+    return this.loadModule() !== null;
+  }
+
   private async ensureLoaded() {
     if (!this.whisper) {
-      this.whisper = await initWhisper({
+      const mod = this.loadModule();
+      if (!mod) throw new Error('whisper.rn 不可用（Expo Go 预览模式）');
+      this.whisper = await mod.initWhisper({
         filePath: require('../../assets/models/ggml-model.bin'),
       });
     }
@@ -51,7 +87,9 @@ class WhisperRecognizer implements Recognizer {
   private async ensureVad() {
     if (!this.vad) {
       try {
-        this.vad = await initWhisperVad({
+        const mod = this.loadModule();
+        if (!mod) return null;
+        this.vad = await mod.initWhisperVad({
           filePath: require('../../assets/models/ggml-vad.bin'),
           useGpu: false,
         });
@@ -86,11 +124,12 @@ class WhisperRecognizer implements Recognizer {
       const { result } = await promise;
       const transcript: string = (result?.result ?? result ?? '').trim();
       const pauseSec = await this.measurePause(uri, durationSec);
+      log.info(`whisper 识别: transcript="${transcript.slice(0, 80)}" pause=${pauseSec.toFixed(1)}s`);
       // 注：whisper.rn 当前未暴露词级 token 概率，置信度走默认 0.9（不惩罚）；
       // 待运行器暴露概率后可传真实值做发音质量加权
       return scoreUtterance(transcript, expected, durationSec, 0.9, pauseSec);
     } catch (e) {
-      console.warn('识别失败', e);
+      log.error('whisper 识别失败: ' + (e instanceof Error ? e.message : String(e)));
       return scoreFailed(expected);
     }
   }
@@ -106,12 +145,7 @@ export function getRecognizer(): Recognizer {
   return cached;
 }
 
-/** 录音采样配置：16kHz 单声道 16bit WAV，whisper.cpp 直接消费，免转码 */
-export const WAV_RECORDING_PRESET = {
-  extension: '.wav',
-  sampleRate: 16000,
-  numberOfChannels: 1,
-  bitDepth: 16,
-  encodeBitRate: 256000,
-  linearPCM: true,
-};
+/** 录音采样配置：SDK 54 下 expo-audio 不支持 WAV 直录字段（bitDepth/linearPCM 为 SDK 55+），
+ *  预览模式仅按语速评分，音频格式无关，故用内置 HIGH_QUALITY（m4a）。
+ *  升级 SDK 57+ 后恢复 16kHz 单声道 WAV 直录 preset 供 whisper.cpp 免转码消费。 */
+export const WAV_RECORDING_PRESET = RecordingPresets.HIGH_QUALITY;

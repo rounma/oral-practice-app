@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import { log } from './logger';
 
 /**
  * TTS 可插拔接口
@@ -17,13 +18,14 @@ class SystemTts implements TtsEngine {
   speak(text: string, onDone?: () => void) {
     this.stop();
     this.speaking = true;
+    log.info('TTS 播放: ' + text.slice(0, 60));
     Speech.speak(text, {
       language: 'en-US',
       rate: 0.85,
       pitch: 1.0,
       onDone: () => { this.speaking = false; onDone?.(); },
       onStopped: () => { this.speaking = false; },
-      onError: () => { this.speaking = false; },
+      onError: (e) => { this.speaking = false; log.warn('TTS 播放失败: ' + String(e)); },
     });
   }
 
