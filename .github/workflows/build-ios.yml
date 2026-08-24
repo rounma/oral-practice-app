@@ -30,7 +30,7 @@ jobs:
       - name: Build unsigned .app (Release)
         working-directory: ios
         run: |
-          WORKSPACE=$(ls *.xcworkspace | head -1)
+          WORKSPACE=$(ls -d *.xcworkspace | head -1)
           echo "Workspace: $WORKSPACE"
           xcodebuild -workspace "$WORKSPACE" \
             -scheme "$(basename "$WORKSPACE" .xcworkspace)" \
