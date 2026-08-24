@@ -1,9 +1,7 @@
 import { registerRootComponent } from 'expo';
 import { Alert } from 'react-native';
 
-import App from './App';
-
-// 诊断用全局错误捕获：任何 JS 错误都弹窗显示（Release 下默认是白屏，弹窗能直接看到错误）
+// 诊断用全局错误捕获：在 require('./App') 之前设置，import 阶段的错误也能捕获
 const originalHandler = ErrorUtils.getGlobalHandler?.();
 ErrorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
   const err = error instanceof Error ? error : new Error(String(error));
@@ -17,7 +15,20 @@ ErrorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
   if (originalHandler) originalHandler(error, isFatal);
 });
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
+// 延迟加载 App：ErrorUtils 设置完成后再 require，import 阶段的错误也能弹窗显示
+let App: React.ComponentType<any>;
+try {
+  App = require('./App').default;
+} catch (e) {
+  const err = e instanceof Error ? e : new Error(String(e));
+  console.error('APP_IMPORT_ERROR', err);
+  try {
+    Alert.alert('App 加载失败', `${err.message}\n${err.stack || ''}`.slice(0, 1800));
+  } catch {}
+  // 提供一个空组件，避免完全白屏无提示
+  App = function AppLoadFailed() {
+    return null;
+  };
+}
+
 registerRootComponent(App);

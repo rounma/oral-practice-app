@@ -57,6 +57,11 @@ function App() {
 
   useEffect(() => {
     log.info('App 启动');
+    let cancelled = false;
+    // 超时兜底：AsyncStorage 卡住时也能渲染 UI（防止 return null 导致白屏）
+    const timer = setTimeout(() => {
+      if (!cancelled) setReady(true);
+    }, 3000);
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(FAV_KEY);
@@ -64,9 +69,17 @@ function App() {
         log.info('收藏加载完成: ' + (raw ? raw.length + ' 字符' : '空'));
       } catch (e) {
         log.error('加载收藏失败: ' + String(e));
+      } finally {
+        if (!cancelled) {
+          clearTimeout(timer);
+          setReady(true);
+        }
       }
-      setReady(true);
     })();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   const openSection = useCallback((sectionId: string) => {
