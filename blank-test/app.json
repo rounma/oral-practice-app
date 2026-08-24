@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "BlankTest",
+    "slug": "blank-test",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.superhale.blanktest"
+    },
+    "updates": {
+      "enabled": false
+    }
+  }
+}
