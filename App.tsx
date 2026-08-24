@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Component, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SECTIONS } from './src/data/content';
 import { log } from './src/services/logger';
@@ -8,12 +9,48 @@ import PracticeScreen from './src/screens/PracticeScreen';
 
 const FAV_KEY = 'oral_favorites_v1';
 
+/** 诊断用 ErrorBoundary：渲染错误直接显示在屏幕上 */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: unknown) {
+    console.error('BOUNDARY_ERROR', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#fff' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#c00' }}>App 渲染错误</Text>
+          <Text style={{ fontSize: 14, marginTop: 12, color: '#333' }}>{String(this.state.error)}</Text>
+          <Text style={{ fontSize: 12, marginTop: 8, color: '#666' }}>
+            {String((this.state.error as Error & { stack?: string }).stack || '')}
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 type Route =
   | { name: 'home' }
   | { name: 'section'; sectionId: string }
   | { name: 'practice'; sectionId: string; index: number };
 
-export default function App() {
+export default function AppRoot() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [favorites, setFavorites] = useState<string[]>([]);
   const [ready, setReady] = useState(false);
